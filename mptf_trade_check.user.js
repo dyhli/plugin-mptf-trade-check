@@ -201,12 +201,17 @@ async function isMarketplaceTfBot (sid)
     }
 }
 
+/**
+ * Shows the information dialog on the trade window
+ *
+ * @return {void}
+ */
 function showDialog ()
 {
     jQuery('#mainContent').prepend(`
         <div id="${DialogID}" class="mptf--state--loading">
-			<img src="https://steamcommunity-a.akamaihd.net/public/images/login/throbber.gif" alt="" style="width:24px;vertical-align: middle">
-			<span>Marketplace.tf bot check in progress, please wait...</span>
+            <img src="https://steamcommunity-a.akamaihd.net/public/images/login/throbber.gif" alt="" style="width:24px;vertical-align: middle">
+            <span>Marketplace.tf bot check in progress, please wait...</span>
 	    </div>
     `);
 }
