@@ -10,11 +10,14 @@ This user browser script checks if a trade is from an official Marketplace.tf bo
 
 ## Images
 
-**Legitimate trade**
+**Trading in action**
+![Trading in action](https://i.imgur.com/YWRYHJj.gif)
+
+**Legitimate bot**
 
 ![Legitimate trade](https://i.imgur.com/UIH2JmW.png)
 
-**Illegitimate trade**
+**Illegitimate bot**
 
 ![Illegitimate trade](https://i.imgur.com/i93gBjG.png)
 

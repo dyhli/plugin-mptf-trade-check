@@ -9,7 +9,7 @@
 // @updateURL       https://github.com/dyhli/plugin-mptf-trade-check/raw/master/mptf_trade_check.user.js
 
 // @author          dyhli
-// @version         1.0
+// @version         1.2
 // @license         MIT
 
 // @grant           GM_addStyle
@@ -48,12 +48,18 @@ const WordsToCheckInName = [
  */
 
 const Partner = {
-    sid: g_ulTradePartnerSteamID,
-    name: g_strTradePartnerPersonaName
+    sid: g_ulTradePartnerSteamID || undefined,
+    name: g_strTradePartnerPersonaName || undefined
 };
-const DialogID = '__plugin_mptf_trade_check_dialog';
 
-(async (window, jQuery, Partner) => {
+const DialogID = '__plugin_mptf_trade_check_dialog';
+const ModalID = '__plugin-mptf_trade_check_modal';
+
+let TradeOfferID = 0;
+let TradeOfferCheckCount = 0;
+const ProfileUrl = UserYou.strProfileURL || '';
+
+(async (jQuery, Partner) => {
     // if Partner.sid or Partner.name are undefined, we can assume that
     // the trade has error-ed out.
     if (Partner.sid === undefined || Partner.name === undefined) return;
@@ -61,6 +67,7 @@ const DialogID = '__plugin_mptf_trade_check_dialog';
     // does the name contain any of the words we want to check?
     if (!nameHasWord(Partner.name)) return;
 
+    registerAjaxInterceptor();
     showDialog();
 
     const Dialog = jQuery('#' + DialogID);
@@ -70,12 +77,15 @@ const DialogID = '__plugin_mptf_trade_check_dialog';
         const isLegitimate = await isMarketplaceTfBot(Partner.sid);
 
         // this is a legitimate bot! hooray!
-        if (isLegitimate) {
+        if (isLegitimate)
+        {
             Dialog.attr('class', 'mptf--state--ok').html(`
                 &check; Verification complete, this is an official Marketplace.tf bot.
             `);
             return;
-        } else {
+        }
+        else
+        {
             Dialog.attr('class', 'mptf--state--danger').html(`
                 &times; WARNING! This is <u>NOT</u> an official Marketplace.tf bot, you may be a victim of the sophisticated
                 Marketplace.tf trade scam, please read <a href="https://marketplace.tf/blog/posts/YHLZOB" target="_blank">this blog post</a>
@@ -88,7 +98,7 @@ const DialogID = '__plugin_mptf_trade_check_dialog';
         `);
         return;
     }
-})(window, jQuery, Partner);
+})(jQuery, Partner);
 
 /**
  * Checks if one of the words is in the trade partner's name
@@ -212,7 +222,163 @@ function showDialog ()
         <div id="${DialogID}" class="mptf--state--loading">
             <img src="https://steamcommunity-a.akamaihd.net/public/images/login/throbber.gif" alt="" style="width:24px;vertical-align: middle">
             <span>Marketplace.tf bot check in progress, please wait...</span>
-	    </div>
+        </div>
+    `);
+}
+
+/**
+ * Listens to when an AJAX requests completes and executes onTradeOfferSent() when
+ * the trade offer was successfully sent.
+ *
+ * @return {void}
+ */
+function registerAjaxInterceptor ()
+{
+    jQuery(document).ajaxComplete((event, xhr, settings) => {
+        if (
+            settings.type === 'POST' &&
+            settings.url === 'https://steamcommunity.com/tradeoffer/new/send' &&
+            xhr.hasOwnProperty('responseJSON') &&
+            xhr.responseJSON.hasOwnProperty('tradeofferid')
+        ) {
+            onTradeOfferSent(xhr.responseJSON.tradeofferid);
+        }
+    })
+}
+
+/**
+ * Trade offer was successfully sent, we have received the trade offer ID.
+ *
+ * @param tradeofferid
+ */
+function onTradeOfferSent (tradeofferid)
+{
+    TradeOfferID = tradeofferid;
+
+    showModal();
+    checkTradeOffer();
+}
+
+/**
+ * Show modal.
+ *
+ * @return {void}
+ */
+function showModal ()
+{
+    jQuery('body').prepend(`
+        <div id="${ModalID}-backdrop"></div>
+        <div id="${ModalID}">
+            <img src="https://steamcommunity-a.akamaihd.net/public/images/login/throbber.gif" alt="">
+            <span>Do not confirm the trade on your phone just yet...</span>
+        </div>
+    `);
+}
+
+/**
+ * Show modal telling the user to proceed with accepting the trade on their phone
+ *
+ * @return {void}
+ */
+function showProceedModal ()
+{
+    jQuery('#' + ModalID).find('span').html(`Everything looks fine for now, you may proceed with accepting the
+    trade offer on your phone. Please keep an eye on this window in case things change.`);
+}
+
+/**
+ * Get the trade offer
+ *
+ * @param cb
+ * @return {*}
+ */
+function getTradeOffer (cb)
+{
+    if (!TradeOfferID) return cb(null);
+
+    jQuery.ajax({
+        url: ProfileUrl + '/tradeoffers/sent/',
+        type: 'GET',
+        crossDomain: true,
+        xhrFields: { withCredentials: true }
+    }).done(function (data) {
+        const DOM = jQuery(data);
+        const TradeOffer = DOM.find('#tradeofferid_' + TradeOfferID);
+
+        if (TradeOffer.length === 1) cb(TradeOffer);
+        else cb(null);
+    });
+}
+
+/**
+ * Check the sent trade offer for any weird changes
+ *
+ * @return {void}
+ */
+function checkTradeOffer ()
+{
+    getTradeOffer(function (offer) {
+        // trade offer is no longer active or declined
+        if (offer === null) return offerInactive();
+
+        const IsAccepted = offerIsAccepted(offer);
+
+        // trade offer does not have a cancel button and is not accepted
+        if (!hasCancelButton(offer) && !IsAccepted) return offerInactive();
+
+        // trade offer is still pending
+        if (!IsAccepted)
+        {
+            TradeOfferCheckCount++;
+            if (TradeOfferCheckCount === 3) showProceedModal();
+            setTimeout(checkTradeOffer, 4000);
+        }
+        else
+        {
+            jQuery('#' + ModalID).html(`
+                <span class="plugin--text--ok">
+                    &check; Trade offer successfully accepted by Marketplace.tf!
+                </span>
+            `);
+        }
+    });
+}
+
+/**
+ * Does the trade offer still have a cancel button?
+ *
+ * @param offer
+ * @return {boolean}
+ */
+function hasCancelButton (offer)
+{
+    return offer[0].innerHTML.indexOf('javascript:CancelTradeOffer(') > -1;
+}
+
+/**
+ * Has the offer been accepted?
+ *
+ * @param offer
+ * @return {boolean}
+ */
+function offerIsAccepted (offer)
+{
+    return offer.find('.tradeoffer_items_banner.accepted').length === 1;
+}
+
+/**
+ * Offer is unexpectedly no longer active, may be compromised!
+ *
+ * @return {void}
+ */
+function offerInactive ()
+{
+    jQuery('#' + ModalID).html(`
+        <span class="plugin--text--danger">
+            &times; The trade offer you sent is unexpectedly no longer active. There is a chance that you may be a
+            victim of the Marketplace.tf scam, please read <a href="https://marketplace.tf/blog/posts/YHLZOB" target="_blank">this blog post</a>
+            for more information and what to do next.
+        </span>
     `);
 }
 
@@ -232,24 +398,62 @@ const CSS = `
     line-height: 28px;
     color: #fff;
 }
-
 #${DialogID} img + span {
     margin-left: 8px;
+}
+
+#${ModalID}-backdrop {
+    position: fixed;
+    z-index: 2000;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #222;
+}
+#${ModalID} {
+    position: fixed;
+    z-index: 2001;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    max-width: 100%;
+    height: 100%;
+    text-align: center;
+    padding: 25px 10px;
+    font-size: 28px;
+    line-height: 42px;
+    color: #eee;
+}
+#${ModalID} img {
+    margin: 0 auto;
+    display: block;
+    margin-bottom: 24px;
+}
+
+.plugin--text--ok {
+    color: #5c7e10;
+}
+.plugin--text--danger {
+    color: #d23333;
 }
 
 .mptf--state--loading {
     background-color: #555;
 }
 .mptf--state--ok {
-    background-color: #5c7e10;
+    background-color: #5c7e10 !important;
 }
 .mptf--state--danger {
-    background-color: #d23333;
+    background-color: #d23333 !important;
 }
-.mptf--state--danger a {
+.mptf--state--danger a,
+.plugin--text--danger a{
     color: #ece05b;
 }
-.mptf--state--danger a:hover {
+.mptf--state--danger a:hover,
+.plugin--text--danger a:hover{
     text-decoration: underline;
 }
 `;
